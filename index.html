@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Smartchive</title>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', sans-serif;
+      background: #f4f6f9;
+      margin: 0;
+      padding: 2em;
+      color: #333;
+    }
+    h1 {
+      font-size: 2em;
+      margin-bottom: 0.5em;
+    }
+    h2 {
+      margin-top: 2em;
+      font-size: 1.4em;
+    }
+    .card {
+      background: white;
+      padding: 1.5em;
+      border-radius: 10px;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+      margin-bottom: 2em;
+    }
+    input[type="file"], button, textarea {
+      font-size: 1em;
+      border-radius: 6px;
+      border: none;
+      margin-top: 1em;
+    }
+    input[type="file"] {
+      padding: 0.7em;
+      background: #fff;
+      box-shadow: 0 0 0 1px #ccc;
+    }
+    button {
+      padding: 0.7em 1em;
+      background: #0078d4;
+      color: white;
+      cursor: pointer;
+      margin-right: 1em;
+    }
+    button:hover {
+      background: #005fa3;
+    }
+    #createBtn {
+      background: #ccc;
+      color: #333;
+      font-size: 0.8em;
+      padding: 0.4em 0.6em;
+      border-radius: 4px;
+      margin-left: 0.5em;
+    }
+    #status, #error {
+      margin-top: 1em;
+      font-weight: bold;
+    }
+    #status { color: #007a00; }
+    #error { color: #d40000; }
+    #summaries {
+      display: grid;
+      gap: 1em;
+    }
+    iframe {
+      width: 100%;
+      height: 250px;
+      border: none;
+      box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+      border-radius: 8px;
+      background: white;
+    }
+    textarea {
+      width: 100%;
+      height: 150px;
+      padding: 1em;
+      box-shadow: 0 0 0 1px #ccc;
+      resize: vertical;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>📁 Smartchive</h1>
+    <p><strong>Smart Upload</strong> (recommended): AI-powered summarization using Gemini Flash</p>
+    <input type="file" id="pdfInput" accept="application/pdf" />
+    <button onclick="processPDF()">Smart Upload</button>
+    <button id="createBtn" onclick="showManual()">Create</button>
+    <div id="status"></div>
+    <div id="error"></div>
+  </div>
+
+  <div class="card" id="manualCard" style="display:none;">
+    <h2>✍️ Manual Summary</h2>
+    <textarea id="manualText" placeholder="Write your summary here..."></textarea>
+    <button onclick="uploadManual()">Upload Summary</button>
+  </div>
+
+  <div class="card">
+    <h2>📂 Uploaded Summaries</h2>
+    <div id="summaries"></div>
+  </div>
+
+  <script>
+    pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+
+    const firebaseConfig = {
+      databaseURL: "https://smartchive-86323-default-rtdb.asia-southeast1.firebasedatabase.app/"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    const GEMINI_KEY = "AIzaSyAxyu8KRuHCoWzoNF9jLuWFfhOH2yiIVeA";
+
+    function showManual() {
+      document.getElementById('manualCard').style.display = 'block';
+      document.getElementById('status').textContent = "";
+      document.getElementById('error').textContent = "";
+    }
+
+    async function uploadManual() {
+      const text = document.getElementById('manualText').value.trim();
+      if (!text) return alert("Please write something first.");
+      const html = `<html><body><h1>Summary</h1><p>${text}</p></body></html>`;
+      await db.ref("summaries").push({ html });
+      document.getElementById('manualText').value = "";
+      document.getElementById('manualCard').style.display = 'none';
+      loadSummaries();
+    }
+
+    async function processPDF() {
+      const file = document.getElementById('pdfInput').files[0];
+      if (!file) return alert("Please select a PDF");
+
+      document.getElementById('status').textContent = "📥 Reading PDF…";
+      document.getElementById('error').textContent = "";
+
+      try {
+        const pdfData = await file.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: pdfData }).promise;
+
+        let fullText = '';
+        for (let i = 1; i <= pdf.numPages; i++) {
+          const page = await pdf.getPage(i);
+          const content = await page.getTextContent();
+          fullText += content.items.map(item => item.str).join(' ') + '\n';
+        }
+
+        const chunks = fullText.match(/(.|[\r\n]){1,12000}/g);
+        let combinedSummary = '';
+
+        for (let i = 0; i < chunks.length; i++) {
+          document.getElementById('status').textContent = `🧠 Summarizing chunk ${i + 1} of ${chunks.length}…`;
+
+          const response = await fetch("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "X-goog-api-key": GEMINI_KEY
+            },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text: `Summarize this document chunk:\n\n${chunks[i]}` }] }]
+            })
+          });
+
+          const result = await response.json();
+          if (!result.candidates || !result.candidates[0]) throw new Error("Gemini response malformed or rate-limited.");
+          combinedSummary += `<p>${result.candidates[0].content.parts[0].text}</p>`;
+
+          await new Promise(r => setTimeout(r, 3000)); // 🐢 Wait 3 seconds
+        }
+
+        const html = `<html><body><h1>Summary</h1>${combinedSummary}</body></html>`;
+        document.getElementById('status').textContent = "📤 Uploading to Firebase…";
+        await db.ref("summaries").push({ html });
+
+        document.getElementById('status').textContent = "✅ Done! Summary uploaded.";
+        loadSummaries();
+      } catch (err) {
+        document.getElementById('error').textContent = "❌ Error: " + err.message;
+        document.getElementById('status').textContent = "";
+      }
+    }
+
+    async function loadSummaries() {
+      const container = document.getElementById('summaries');
+      container.innerHTML = "";
+      const snapshot = await db.ref("summaries").get();
+      snapshot.forEach(child => {
+        const html = child.val().html;
+        const blob = new Blob([html], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        const iframe = document.createElement('iframe');
+        iframe.src = url;
+        container.appendChild(iframe);
+      });
+    }
+
+    loadSummaries();
+  </script>
+</body>
+</html>
