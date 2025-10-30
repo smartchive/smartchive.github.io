@@ -109,6 +109,7 @@
   </div>
 
   <script>
+  window.addEventListener("DOMContentLoaded", () => {
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 
     const firebaseConfig = {
@@ -212,10 +213,21 @@
     }
 
     function filterSummaries() {
-  const query = document.getElementById('searchInput').value.toLowerCase();
-  const iframes = document.querySelectorAll('#summaries iframe');
-  iframes.forEach(frame => {
-    frame.style.display = frame.dataset.search.includes(query) ? "block" : "none";
+      const query = document.getElementById('searchInput').value.toLowerCase();
+      const iframes = document.querySelectorAll('#summaries iframe');
+      iframes.forEach(frame => {
+        frame.style.display = frame.dataset.search.includes(query) ? "block" : "none";
+      });
+    }
+
+    // Attach to global scope so HTML onclick works
+    window.processPDF = processPDF;
+    window.filterSummaries = filterSummaries;
+
+    loadSummaries();
   });
-}
+</script>
+</body>
+</html>
+
 
